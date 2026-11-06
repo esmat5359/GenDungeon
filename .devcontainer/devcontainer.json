@@ -1,0 +1,21 @@
+{
+  "name": "GenDungeon",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.13" }
+  },
+  "postCreateCommand": "npm ci && pip install --user -r requirements-dev.txt",
+  "forwardPorts": [5173, 4173],
+  "portsAttributes": {
+    "5173": { "label": "Vite dev server" },
+    "4173": { "label": "Vite preview" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "bradlc.vscode-tailwindcss", "ms-python.python"]
+    },
+    "codespaces": {
+      "openFiles": ["docs/E2E.md"]
+    }
+  }
+}
