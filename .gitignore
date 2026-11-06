@@ -1,0 +1,24 @@
+# dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+artifacts/
+
+# secrets and throwaway end-to-end accounts (never commit)
+.env
+.env.*
+!.env.example
+.e2e/
+
+# reports from the in-memory simulation are not evidence; live reports are tracked
+reports/*-simulation.*
+reports/LATEST-simulation.md
+
+.DS_Store

@@ -1,0 +1,48 @@
+{
+  "name": "gendungeon-app",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "ui:capture": "node scripts/ui/capture.mjs http://localhost:4173 docs/assets/screens",
+    "ui:a11y": "node scripts/ui/a11y.mjs http://localhost:4173",
+    "ui:perf": "node scripts/ui/perf.mjs http://localhost:4173",
+    "check": "npm run typecheck && npm test && npm run build",
+    "test:contract": "pytest -q",
+    "mutation": "python scripts/mutation_check.py",
+    "e2e:dry": "tsx e2e/live/run.ts --dry-run",
+    "e2e:live": "tsx e2e/live/run.ts",
+    "e2e:live:quick": "tsx e2e/live/run.ts --quick",
+    "e2e:commit": "bash scripts/e2e/commit-report.sh"
+  },
+  "dependencies": {
+    "@fontsource-variable/hanken-grotesk": "^5.1.0",
+    "@fontsource/im-fell-english": "^5.1.0",
+    "genlayer-js": "^1.1.8",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/three": "^0.170.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "axe-core": "^4.10.2",
+    "playwright": "^1.63.0",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "vitest": "^2.1.8"
+  }
+}

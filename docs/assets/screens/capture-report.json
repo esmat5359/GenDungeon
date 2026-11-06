@@ -1,0 +1,121 @@
+{
+  "report": {
+    "pages": [
+      {
+        "viewport": "desktop",
+        "route": "gate",
+        "horizontalOverflowPx": 0,
+        "heroMode": "webgl"
+      },
+      {
+        "viewport": "desktop",
+        "route": "play",
+        "horizontalOverflowPx": 0,
+        "heroMode": null
+      },
+      {
+        "viewport": "desktop",
+        "route": "chronicle",
+        "horizontalOverflowPx": 0,
+        "heroMode": null
+      },
+      {
+        "viewport": "desktop",
+        "route": "hall",
+        "horizontalOverflowPx": 0,
+        "heroMode": null
+      },
+      {
+        "viewport": "desktop",
+        "route": "vault",
+        "horizontalOverflowPx": 0,
+        "heroMode": null
+      },
+      {
+        "viewport": "desktop",
+        "route": "codex",
+        "horizontalOverflowPx": 0,
+        "heroMode": null
+      },
+      {
+        "viewport": "desktop",
+        "route": "keeper",
+        "horizontalOverflowPx": 0,
+        "heroMode": null
+      },
+      {
+        "viewport": "phone",
+        "route": "gate",
+        "horizontalOverflowPx": 0,
+        "heroMode": "webgl"
+      },
+      {
+        "viewport": "phone",
+        "route": "play",
+        "horizontalOverflowPx": 0,
+        "heroMode": null
+      },
+      {
+        "viewport": "phone",
+        "route": "chronicle",
+        "horizontalOverflowPx": 0,
+        "heroMode": null
+      },
+      {
+        "viewport": "phone",
+        "route": "hall",
+        "horizontalOverflowPx": 0,
+        "heroMode": null
+      },
+      {
+        "viewport": "phone",
+        "route": "vault",
+        "horizontalOverflowPx": 0,
+        "heroMode": null
+      },
+      {
+        "viewport": "phone",
+        "route": "codex",
+        "horizontalOverflowPx": 0,
+        "heroMode": null
+      },
+      {
+        "viewport": "phone",
+        "route": "keeper",
+        "horizontalOverflowPx": 0,
+        "heroMode": null
+      }
+    ],
+    "flow": [
+      {
+        "step": "choose the second door",
+        "ms": 61
+      },
+      {
+        "step": "pay and descend",
+        "ms": 1570
+      },
+      {
+        "step": "scroll appears",
+        "ms": 11
+      },
+      {
+        "step": "write an action",
+        "ms": 719
+      },
+      {
+        "step": "seal the action",
+        "ms": 3384
+      },
+      {
+        "step": "call the scribes",
+        "ms": 12060
+      },
+      {
+        "step": "claim the reward",
+        "ms": 3734
+      }
+    ]
+  },
+  "problems": []
+}
