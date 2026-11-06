@@ -1,0 +1,264 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --basalt: #080c0e;
+  --verdigris: #5fc7b0;
+  --ember: #f08a3c;
+  --vellum: #ece2c8;
+  --noise: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .55 0'/></filter><rect width='160' height='160' filter='url(%23n)'/></svg>");
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-basalt-950 font-body text-vellum-dim antialiased;
+    min-height: 100vh;
+  }
+
+  /*
+   * Ambient backdrop. Both layers are fixed, composited on their own and use
+   * normal blending, so scrolling never repaints the page behind them (a
+   * blend mode or background-attachment: fixed would).
+   */
+  body::before,
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    will-change: transform;
+    transform: translateZ(0);
+  }
+  body::before {
+    z-index: 0;
+    background-image:
+      radial-gradient(1200px 600px at 78% -10%, rgba(63, 174, 151, 0.12), transparent 60%),
+      radial-gradient(900px 500px at 8% 4%, rgba(240, 138, 60, 0.07), transparent 60%);
+  }
+  body::after {
+    z-index: 0;
+    background-image: var(--noise);
+    opacity: 0.028;
+  }
+
+  ::selection {
+    background: theme("colors.ember.500");
+    color: theme("colors.basalt.950");
+  }
+
+  :focus-visible {
+    outline: 2px solid theme("colors.verdigris.400");
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-display text-vellum;
+    letter-spacing: 0.005em;
+  }
+
+  a {
+    @apply text-verdigris-400 underline decoration-verdigris-600/70 underline-offset-4 transition-colors;
+  }
+  a:hover {
+    @apply text-verdigris-300;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: theme("colors.basalt.600");
+    border-radius: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .page {
+    @apply relative z-10 mx-auto w-full max-w-6xl px-4 sm:px-6;
+  }
+
+  .eyebrow {
+    @apply font-body text-[0.7rem] font-semibold uppercase tracking-[0.22em] text-verdigris-400;
+  }
+
+  .display {
+    @apply font-display text-vellum;
+    font-size: clamp(2.6rem, 6.4vw, 5rem);
+    line-height: 1.02;
+    text-wrap: balance;
+  }
+
+  .h2 {
+    @apply font-display text-3xl text-vellum sm:text-4xl;
+    text-wrap: balance;
+  }
+
+  .lede {
+    @apply max-w-xl text-base leading-relaxed text-vellum-dim sm:text-lg;
+    text-wrap: pretty;
+  }
+
+  .panel {
+    @apply relative rounded-xl border border-basalt-600/70 bg-basalt-800/90 p-5 shadow-[0_18px_40px_-24px_rgba(0,0,0,0.9)];
+    background-image: linear-gradient(180deg, rgba(95, 199, 176, 0.045), transparent 38%);
+  }
+
+  .panel-title {
+    @apply font-display text-xl text-vellum;
+  }
+
+  /* The vellum scroll holding the current obstacle and verdicts */
+  .scroll {
+    @apply relative rounded-md px-6 py-7 text-ink sm:px-9;
+    background:
+      radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, 0.35), transparent 60%),
+      linear-gradient(180deg, #efe6cd 0%, #e4d8b8 100%);
+    box-shadow:
+      inset 0 0 60px rgba(120, 90, 40, 0.28),
+      0 30px 60px -28px rgba(0, 0, 0, 0.85);
+  }
+  .scroll::before,
+  .scroll::after {
+    content: "";
+    position: absolute;
+    left: -10px;
+    right: -10px;
+    height: 14px;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #7a4a1d, #4a2a0e);
+    box-shadow: 0 6px 12px -4px rgba(0, 0, 0, 0.7);
+  }
+  .scroll::before {
+    top: -7px;
+  }
+  .scroll::after {
+    bottom: -7px;
+  }
+  .scroll h2,
+  .scroll h3 {
+    @apply text-ink;
+  }
+  .scroll .eyebrow {
+    @apply text-oxblood-500;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold tracking-wide transition duration-200;
+    @apply disabled:cursor-not-allowed disabled:opacity-45;
+  }
+  .btn-primary {
+    @apply btn bg-ember-500 text-basalt-950 shadow-[0_8px_24px_-10px_rgba(240,138,60,0.8)] hover:bg-ember-400 active:translate-y-px;
+  }
+  .btn-teal {
+    @apply btn bg-verdigris-500 text-basalt-950 hover:bg-verdigris-400 active:translate-y-px;
+  }
+  .btn-ghost {
+    @apply btn border border-basalt-500 text-vellum hover:border-verdigris-500 hover:text-verdigris-300;
+  }
+  .btn-danger {
+    @apply btn border border-oxblood-500/70 text-oxblood-400 hover:bg-oxblood-500/15;
+  }
+  .scroll .btn-ghost {
+    @apply border-ink/40 text-ink hover:border-oxblood-500 hover:text-oxblood-500;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-basalt-500 bg-basalt-900/70 px-3 py-1 text-xs font-medium text-vellum-dim;
+  }
+  .chip-ok {
+    @apply chip border-verdigris-600/60 text-verdigris-300;
+  }
+  .chip-warn {
+    @apply chip border-ember-600/60 text-ember-300;
+  }
+  .chip-bad {
+    @apply chip border-oxblood-500/60 text-oxblood-400;
+  }
+
+  .field {
+    @apply w-full rounded-lg border border-basalt-500 bg-basalt-900 px-3.5 py-2.5 text-sm text-vellum placeholder:text-basalt-500;
+    @apply transition focus:border-verdigris-500 focus:outline-none focus:ring-2 focus:ring-verdigris-500/30;
+  }
+  .scroll .field {
+    @apply border-ink/30 bg-[#f4ecd6]/80 text-ink placeholder:text-ink/40 focus:border-oxblood-500 focus:ring-oxblood-500/25;
+  }
+
+  .label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-[0.14em] text-vellum-shade;
+  }
+
+  .rule {
+    @apply flex items-center gap-3 text-basalt-500;
+  }
+  .rule::before,
+  .rule::after {
+    content: "";
+    height: 1px;
+    flex: 1;
+    background: linear-gradient(90deg, transparent, theme("colors.basalt.500"), transparent);
+  }
+
+  /* IM Fell uses old-style figures (a one looks like a capital I), so numbers always use the sans face. */
+  .num {
+    font-family: "Hanken Grotesk Variable", system-ui, sans-serif !important;
+    font-variant-numeric: tabular-nums lining-nums;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  /* Arched doorway used for the three difficulty tiers */
+  .arch {
+    border-radius: 999px 999px 10px 10px / 140px 140px 10px 10px;
+  }
+
+  .sr-only-focusable:not(:focus):not(:focus-within) {
+    @apply sr-only;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .glow-ember {
+    box-shadow: 0 0 40px -8px rgba(240, 138, 60, 0.55);
+  }
+  .glow-teal {
+    box-shadow: 0 0 40px -10px rgba(95, 199, 176, 0.5);
+  }
+  .stagger > * {
+    animation: rise 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .stagger > *:nth-child(2) { animation-delay: 70ms; }
+  .stagger > *:nth-child(3) { animation-delay: 140ms; }
+  .stagger > *:nth-child(4) { animation-delay: 210ms; }
+  .stagger > *:nth-child(5) { animation-delay: 280ms; }
+  .stagger > *:nth-child(6) { animation-delay: 350ms; }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

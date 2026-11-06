@@ -1,0 +1,307 @@
+/**
+ * LiveGame: the GameApi implementation backed by a deployed GenDungeon v2
+ * contract on GenLayer, spoken to through genlayer-js.
+ *
+ * Nothing in here touches the DOM, so the live end-to-end script imports it
+ * unchanged from Node (via tsx).
+ */
+
+import { TransactionStatus } from "genlayer-js/types";
+import type { TransactionHash } from "genlayer-js/types";
+import type { AppGenLayerClient } from "./genlayerClient";
+import type { GameApi } from "./api";
+import {
+  asList,
+  normalizeConfig,
+  normalizeHallEntry,
+  normalizeHistoryItem,
+  normalizeOpenQuest,
+  normalizeQuest,
+  normalizeStats,
+  normalizeTier,
+  normalizeTreasury,
+} from "./normalize";
+import { safeStringify, toBigInt, toNumber, toText } from "./format";
+import { GameError, type TxOutcome, type TxStatusListener } from "./types";
+
+const TERMINAL = new Set<string>([
+  TransactionStatus.ACCEPTED,
+  TransactionStatus.FINALIZED,
+  TransactionStatus.UNDETERMINED,
+  TransactionStatus.CANCELED,
+  TransactionStatus.LEADER_TIMEOUT,
+  TransactionStatus.VALIDATORS_TIMEOUT,
+]);
+
+const FAILED_STATUSES = new Set<string>([
+  TransactionStatus.UNDETERMINED,
+  TransactionStatus.CANCELED,
+  TransactionStatus.LEADER_TIMEOUT,
+  TransactionStatus.VALIDATORS_TIMEOUT,
+]);
+
+const ERROR_KEYS = new Set(["error", "stderr", "message", "result", "reason"]);
+
+/** Digs a short, human-readable failure reason out of a receipt. */
+export function extractRevertReason(receipt: unknown): string {
+  const found: string[] = [];
+  const seen = new Set<unknown>();
+  const walk = (node: unknown, depth: number) => {
+    if (depth > 6 || node === null || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    const entries: Array<[string, unknown]> =
+      node instanceof Map ? Array.from(node.entries()).map(([k, v]) => [String(k), v]) : Object.entries(node);
+    for (const [key, value] of entries) {
+      if (typeof value === "string" && ERROR_KEYS.has(key) && value.trim() && !/^0x[0-9a-f]*$/i.test(value)) {
+        found.push(value.trim());
+      } else if (typeof value === "object") {
+        walk(value, depth + 1);
+      }
+    }
+  };
+  walk(receipt, 0);
+  const useful = found.find((text) => /[a-z]{3}/i.test(text) && !/^(success|agree|return)$/i.test(text));
+  return (useful ?? "The transaction failed on-chain.").slice(0, 300);
+}
+
+/** True when the receipt shows the contract call itself ended in an error. */
+export function receiptFailed(receipt: any): boolean {
+  if (!receipt) return true;
+  const status = String(receipt.statusName ?? receipt.status ?? "");
+  if (FAILED_STATUSES.has(status)) return true;
+  return String(receipt.txExecutionResultName ?? "") === "FINISHED_WITH_ERROR";
+}
+
+function friendly(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  if (/user rejected|denied|rejected the request/i.test(text)) return "The wallet request was rejected.";
+  if (/insufficient funds|exceeds balance/i.test(text)) return "The account does not hold enough GEN to pay for this.";
+  return text.slice(0, 300);
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export interface LiveGameOptions {
+  /** Poll interval for the transaction narrator and the receipt wait. */
+  pollMs?: number;
+  /** How long to wait for consensus before giving up, in milliseconds. */
+  timeoutMs?: number;
+  /** Invoked with every raw receipt (the E2E report keeps them). */
+  onReceipt?: (functionName: string, receipt: unknown) => void;
+}
+
+export class LiveGame implements GameApi {
+  readonly mode = "live" as const;
+  readonly address: `0x${string}`;
+  readonly caller: string;
+  private readonly reader: AppGenLayerClient;
+  private readonly writer: AppGenLayerClient | null;
+  private readonly pollMs: number;
+  private readonly timeoutMs: number;
+  private readonly onReceipt?: (functionName: string, receipt: unknown) => void;
+
+  constructor(
+    address: `0x${string}`,
+    reader: AppGenLayerClient,
+    writer: AppGenLayerClient | null = null,
+    caller = "",
+    options: LiveGameOptions = {},
+  ) {
+    this.address = address;
+    this.reader = reader;
+    this.writer = writer;
+    this.caller = caller;
+    this.pollMs = options.pollMs ?? 1500;
+    this.timeoutMs = options.timeoutMs ?? 6 * 60_000;
+    this.onReceipt = options.onReceipt;
+  }
+
+  // ------------------------------------------------------------------ reads
+  private async read(functionName: string, args: unknown[] = []): Promise<unknown> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await this.reader.readContract({
+          address: this.address,
+          functionName,
+          args: args as any[],
+        });
+      } catch (error) {
+        lastError = error;
+        await sleep(250 * (attempt + 1));
+      }
+    }
+    throw new GameError(`Read of ${functionName} failed: ${friendly(lastError)}`);
+  }
+
+  async getVersion() {
+    return toText(await this.read("get_version"));
+  }
+  async getOwner() {
+    return toText(await this.read("get_owner"));
+  }
+  async getPendingOwner() {
+    return toText(await this.read("get_pending_owner"));
+  }
+  async getConfig() {
+    return normalizeConfig(await this.read("get_config"));
+  }
+  async getTreasury() {
+    return normalizeTreasury(await this.read("get_treasury"));
+  }
+  async getTiers() {
+    return asList(await this.read("get_tiers")).map(normalizeTier);
+  }
+  async quoteReward(tier: number, score: number) {
+    return toBigInt(await this.read("quote_reward", [tier, score]));
+  }
+  async validateAction(action: string) {
+    return toText(await this.read("validate_action", [action]));
+  }
+  async getQuest(questId: number) {
+    return normalizeQuest(await this.read("get_quest", [questId]));
+  }
+  async getActiveQuestId(player: string) {
+    return toNumber(await this.read("get_player_active_quest", [player]));
+  }
+  async getStats(player: string) {
+    return normalizeStats(await this.read("get_player_stats", [player]));
+  }
+  async getHistory(player: string, limit: number) {
+    return asList(await this.read("get_player_history", [player, limit])).map(normalizeHistoryItem);
+  }
+  async listOpenQuests(limit: number) {
+    return asList(await this.read("list_active_quests", [limit])).map(normalizeOpenQuest);
+  }
+  async getHall() {
+    return asList(await this.read("get_hall_of_fame")).map(normalizeHallEntry);
+  }
+
+  // ----------------------------------------------------------------- writes
+  private async send(
+    functionName: string,
+    args: unknown[],
+    value: bigint,
+    onStatus?: TxStatusListener,
+  ): Promise<TxOutcome> {
+    if (!this.writer) throw new GameError("Connect a wallet first.");
+
+    let hash: TransactionHash;
+    try {
+      hash = (await this.writer.writeContract({
+        address: this.address,
+        functionName,
+        args: args as any[],
+        value,
+      })) as TransactionHash;
+    } catch (error) {
+      throw new GameError(friendly(error));
+    }
+
+    onStatus?.(TransactionStatus.PENDING);
+    const stopNarrator = this.narrate(hash, onStatus);
+    try {
+      const receipt: any = await this.writer.waitForTransactionReceipt({
+        hash,
+        status: TransactionStatus.ACCEPTED,
+        interval: this.pollMs,
+        retries: Math.ceil(this.timeoutMs / this.pollMs),
+      });
+      this.onReceipt?.(functionName, receipt);
+      const status = String(receipt?.statusName ?? receipt?.status ?? "ACCEPTED");
+      onStatus?.(status);
+      if (receiptFailed(receipt)) {
+        return { hash, status, ok: false, error: extractRevertReason(receipt) };
+      }
+      return { hash, status, ok: true };
+    } catch (error) {
+      throw new GameError(friendly(error));
+    } finally {
+      stopNarrator();
+    }
+  }
+
+  /** Streams intermediate consensus states to the UI while a receipt is pending. */
+  private narrate(hash: TransactionHash, onStatus?: TxStatusListener): () => void {
+    if (!onStatus) return () => undefined;
+    let stopped = false;
+    void (async () => {
+      let last = "";
+      while (!stopped) {
+        try {
+          const tx: any = await this.reader.getTransaction({ hash });
+          const status = String(tx?.statusName ?? tx?.status ?? "");
+          if (status && status !== last) {
+            last = status;
+            onStatus(status);
+          }
+          if (TERMINAL.has(status)) return;
+        } catch {
+          // Not indexed yet; try again on the next tick.
+        }
+        await sleep(this.pollMs);
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+  }
+
+  startQuest(tier: number, value: bigint, onStatus?: TxStatusListener) {
+    return this.send("start_quest", [tier], value, onStatus);
+  }
+  submitAction(questId: number, action: string, onStatus?: TxStatusListener) {
+    return this.send("submit_action", [questId, action], 0n, onStatus);
+  }
+  resolveQuest(questId: number, onStatus?: TxStatusListener) {
+    return this.send("resolve_quest", [questId], 0n, onStatus);
+  }
+  claimReward(questId: number, onStatus?: TxStatusListener) {
+    return this.send("claim_reward", [questId], 0n, onStatus);
+  }
+  surrenderQuest(onStatus?: TxStatusListener) {
+    return this.send("surrender_quest", [], 0n, onStatus);
+  }
+  expireQuest(questId: number, onStatus?: TxStatusListener) {
+    return this.send("expire_quest", [questId], 0n, onStatus);
+  }
+  fundPool(value: bigint, onStatus?: TxStatusListener) {
+    return this.send("fund_pool", [], value, onStatus);
+  }
+  setFeeAndRewards(entryFee: bigint, minReward: bigint, maxReward: bigint, onStatus?: TxStatusListener) {
+    return this.send("set_fee_and_rewards", [entryFee, minReward, maxReward], 0n, onStatus);
+  }
+  setPayoutCap(bps: number, onStatus?: TxStatusListener) {
+    return this.send("set_payout_cap", [bps], 0n, onStatus);
+  }
+  setQuestTtl(seconds: number, onStatus?: TxStatusListener) {
+    return this.send("set_quest_ttl", [seconds], 0n, onStatus);
+  }
+  setPaused(paused: boolean, onStatus?: TxStatusListener) {
+    return this.send("set_paused", [paused], 0n, onStatus);
+  }
+  transferOwnership(newOwner: string, onStatus?: TxStatusListener) {
+    return this.send("transfer_ownership", [newOwner], 0n, onStatus);
+  }
+  acceptOwnership(onStatus?: TxStatusListener) {
+    return this.send("accept_ownership", [], 0n, onStatus);
+  }
+  cancelOwnershipTransfer(onStatus?: TxStatusListener) {
+    return this.send("cancel_ownership_transfer", [], 0n, onStatus);
+  }
+}
+
+/** Debug helper: a receipt as readable JSON. */
+export function describeReceipt(receipt: unknown): string {
+  return safeStringify(receipt);
+}
+
+/** True when the deployed contract exposes the v2 API. */
+export async function detectVersion(game: Pick<GameApi, "getVersion">): Promise<"v2" | "legacy"> {
+  try {
+    const version = await game.getVersion();
+    return version.startsWith("2.") ? "v2" : "legacy";
+  } catch {
+    return "legacy";
+  }
+}
