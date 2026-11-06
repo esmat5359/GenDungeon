@@ -1,0 +1,50 @@
+name: Live end-to-end (GenLayer Studio)
+
+# Deploys a fresh contract to GenLayer Studio and runs every scenario against it.
+# Start it by hand from the Actions tab. It can also be run in a Codespace with
+# `npm run e2e:live`; see docs/E2E.md.
+on:
+  workflow_dispatch:
+    inputs:
+      quick:
+        description: "Quick run (fewer attacks, no observation)"
+        type: boolean
+        default: false
+      commit_report:
+        description: "Commit the report to a new branch when the run passes"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - name: Run the live end-to-end suite
+        run: npm run e2e:live -- ${{ inputs.quick && '--quick' || '' }}
+        env:
+          E2E_TIMEOUT_MIN: "100"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-report
+          path: reports/
+          if-no-files-found: warn
+      - name: Commit the report to a branch
+        if: success() && inputs.commit_report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "e2e-report-${{ github.run_id }}"
+          bash scripts/e2e/commit-report.sh --push
