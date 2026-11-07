@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { genToWei, weiToGen, toBigInt, toBool, shortAddress, bpsToPercent, formatDuration, safeStringify } from "../lib/format";
 import { field, normalizeConfig, normalizeQuest, normalizeStats, asList } from "../lib/normalize";
-import { LiveGame, extractRevertReason, isPayloadRejected, isRateLimited, receiptFailed } from "../lib/contract";
+import { LiveGame, extractRevertReason, isPayloadRejected, isQuorumCancellation, isRateLimited, receiptFailed } from "../lib/contract";
 import { isSuccess, overallScore, rewardFor, rankIndex, nextRankAt, rankProgress, localActionProblem } from "../lib/rules";
 import { isAddress, resolveConfig } from "../lib/env";
 
@@ -110,6 +110,58 @@ describe("Studio receipts", () => {
   });
   it("reads the camelCase spelling too", () => {
     expect(receiptFailed({ status: "ACCEPTED", consensusData: { leaderReceipt: { executionResult: "ERROR" } } })).toBe(true);
+  });
+});
+
+/** Leader-receipt entries as seen in tx 0x4b6c600bed: the leader succeeded, a second validator was cancelled after quorum. */
+const QUORUM_CANCELLED = {
+  execution_result: "ERROR",
+  genvm_result: {
+    stderr: "Validator execution cancelled after quorum",
+    stdout: "",
+    raw_error: { fatal: false, causes: ["VALIDATOR_QUORUM_REACHED"] },
+    error_code: "CONSENSUS_VALIDATOR_QUORUM_REACHED",
+  },
+  vote: "idle",
+};
+const LEADER_OK = { execution_result: "SUCCESS", genvm_result: { stderr: "", stdout: "", raw_error: null, error_code: null }, vote: null };
+
+describe("validators cancelled after a quorum", () => {
+  const accepted = (...leaders: unknown[]) => ({
+    statusName: "ACCEPTED",
+    consensus_data: { leader_receipt: leaders, votes: { a: "agree", b: "disagree", c: "agree", d: "agree" } },
+  });
+
+  it("does not fail a call that succeeded and then had a validator cancelled", () => {
+    expect(receiptFailed(accepted(LEADER_OK, QUORUM_CANCELLED))).toBe(false);
+    expect(receiptFailed(accepted(QUORUM_CANCELLED, LEADER_OK))).toBe(false);
+  });
+  it("recognises the cancellation by code, by text or by a non-fatal quorum cause", () => {
+    const byCode = { execution_result: "ERROR", genvm_result: { error_code: "CONSENSUS_VALIDATOR_QUORUM_REACHED" } };
+    const byText = { execution_result: "ERROR", genvm_result: { stderr: "Validator execution cancelled after quorum" } };
+    const byCause = { execution_result: "ERROR", genvm_result: { raw_error: { fatal: false, causes: ["VALIDATOR_QUORUM_REACHED"] } } };
+    for (const entry of [byCode, byText, byCause]) {
+      expect(isQuorumCancellation(entry)).toBe(true);
+      expect(receiptFailed(accepted(LEADER_OK, entry))).toBe(false);
+    }
+  });
+  it("still fails a real contract error, even a non-fatal one", () => {
+    const nonFatal = { execution_result: "ERROR", genvm_result: { stderr: "ValueError: boom", raw_error: { fatal: false, causes: ["VM_ERROR"] } } };
+    expect(isQuorumCancellation(nonFatal)).toBe(false);
+    expect(receiptFailed(accepted(nonFatal))).toBe(true);
+    expect(receiptFailed(accepted(LEADER_OK, nonFatal))).toBe(true);
+    expect(receiptFailed(accepted(QUORUM_CANCELLED, { execution_result: "ERROR", result: { status: "rollback", payload: "x" } }))).toBe(true);
+  });
+  it("still fails on a bad consensus status or a FINISHED_WITH_ERROR receipt", () => {
+    expect(receiptFailed({ ...accepted(LEADER_OK, QUORUM_CANCELLED), statusName: "UNDETERMINED" })).toBe(true);
+    expect(receiptFailed({ ...accepted(LEADER_OK, QUORUM_CANCELLED), txExecutionResultName: "FINISHED_WITH_ERROR" })).toBe(true);
+  });
+  it("never reports the cancellation as the revert reason", () => {
+    const real = { execution_result: "ERROR", result: { status: "rollback", payload: "Only the owner can do this" } };
+    expect(extractRevertReason(accepted(QUORUM_CANCELLED, real))).toBe("Only the owner can do this");
+    expect(extractRevertReason(accepted(real, QUORUM_CANCELLED))).toBe("Only the owner can do this");
+    expect(extractRevertReason(accepted(QUORUM_CANCELLED))).not.toMatch(/cancell?ed after quorum/i);
+    expect(extractRevertReason(accepted(QUORUM_CANCELLED))).toBe('The transaction failed on-chain (votes {"agree":3,"disagree":1}).');
   });
 });
 

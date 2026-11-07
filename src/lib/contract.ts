@@ -53,6 +53,31 @@ function leaderReceipts(receipt: any): any[] {
   return Array.isArray(leader) ? leader : [leader];
 }
 
+const QUORUM_CANCEL_TEXT = /cancell?ed after quorum/i;
+const QUORUM_CANCEL_CODE = /CONSENSUS_VALIDATOR_QUORUM_REACHED/i;
+const QUORUM_CANCEL_CAUSE = /QUORUM_REACHED/i;
+
+/**
+ * True for a (leader or validator) receipt that only records "this validator was stopped because a quorum had already
+ * been reached". Such an entry carries `execution_result: "ERROR"` and a `stderr`, but it is not a failure of the
+ * contract call: the other validators finished and voted, and the transaction is accepted.
+ *
+ * A bare `raw_error.fatal === false` is NOT enough on its own: an ordinary contract error (a Python exception inside the
+ * VM, say) is non-fatal as well, and treating it as a cancellation would turn a real failure into a success. The
+ * `fatal === false` marker therefore only counts together with a quorum cause.
+ */
+export function isQuorumCancellation(entry: any): boolean {
+  if (!entry || typeof entry !== "object") return false;
+  const genvm = entry.genvm_result ?? entry.genvmResult ?? entry.genvm;
+  if (!genvm || typeof genvm !== "object") return false;
+  if (QUORUM_CANCEL_CODE.test(String(genvm.error_code ?? genvm.errorCode ?? ""))) return true;
+  const texts = [genvm.stderr, genvm.error_description, genvm.errorDescription];
+  if (texts.some((text) => typeof text === "string" && QUORUM_CANCEL_TEXT.test(text))) return true;
+  const raw = genvm.raw_error ?? genvm.rawError;
+  const causes: unknown[] = Array.isArray(raw?.causes) ? raw.causes : [];
+  return raw?.fatal === false && causes.some((cause) => QUORUM_CANCEL_CAUSE.test(String(cause)));
+}
+
 /** Digs a short, human-readable failure reason out of a receipt. */
 export function extractRevertReason(receipt: unknown): string {
   const found: string[] = [];
@@ -60,10 +85,18 @@ export function extractRevertReason(receipt: unknown): string {
   const walk = (node: unknown, depth: number) => {
     if (depth > 6 || node === null || typeof node !== "object" || seen.has(node)) return;
     seen.add(node);
+    // A validator that was cancelled after the quorum is bookkeeping, never the reason a call failed.
+    if (isQuorumCancellation(node)) return;
     const entries: Array<[string, unknown]> =
       node instanceof Map ? Array.from(node.entries()).map(([k, v]) => [String(k), v]) : Object.entries(node);
     for (const [key, value] of entries) {
-      if (typeof value === "string" && ERROR_KEYS.has(key) && value.trim() && !/^0x[0-9a-f]*$/i.test(value)) {
+      if (
+        typeof value === "string" &&
+        ERROR_KEYS.has(key) &&
+        value.trim() &&
+        !/^0x[0-9a-f]*$/i.test(value) &&
+        !QUORUM_CANCEL_TEXT.test(value)
+      ) {
         found.push(value.trim());
       } else if (typeof value === "object") {
         walk(value, depth + 1);
@@ -79,6 +112,7 @@ export function extractRevertReason(receipt: unknown): string {
 function describeLeaderFailure(receipt: any): string | undefined {
   const parts: string[] = [];
   for (const leader of leaderReceipts(receipt)) {
+    if (isQuorumCancellation(leader)) continue;
     const outcome = [leader?.execution_result, leader?.result?.status].filter(Boolean).join("/");
     if (outcome) parts.push(`leader ${outcome}`);
     for (const key of ["stderr", "stdout"]) {
@@ -102,6 +136,10 @@ function describeLeaderFailure(receipt: any): string | undefined {
  * failure is recorded depends on the network. A consensus-contract receipt carries `txExecutionResultName`; a Studio
  * receipt has no such field and records the outcome on the leader's receipt instead (`execution_result` is "ERROR"
  * and `result.status` is "rollback" for a `UserError`).
+ *
+ * The leader receipt can be a list: besides the leader's own run it may hold entries for validators that were
+ * cancelled once a quorum had voted (`CONSENSUS_VALIDATOR_QUORUM_REACHED`). Those also read `ERROR`, but they say
+ * nothing about the call, so they are skipped.
  */
 export function receiptFailed(receipt: any): boolean {
   if (!receipt) return true;
@@ -109,6 +147,7 @@ export function receiptFailed(receipt: any): boolean {
   if (FAILED_STATUSES.has(status)) return true;
   if (String(receipt.txExecutionResultName ?? "") === "FINISHED_WITH_ERROR") return true;
   for (const leader of leaderReceipts(receipt)) {
+    if (isQuorumCancellation(leader)) continue;
     if (String(leader?.execution_result ?? leader?.executionResult ?? "").toUpperCase() === "ERROR") return true;
     const kind = leader?.result?.status ?? leader?.genvm_result?.status;
     if (typeof kind === "string" && FAILED_RESULT_KINDS.has(kind.toLowerCase())) return true;
