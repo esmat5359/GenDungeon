@@ -166,6 +166,7 @@ passed, `1` a check failed or the run was interrupted, `2` the network was unrea
 | Many "skipped" | The judges were strict. Raise `E2E_MAX_ATTEMPTS`. |
 | Timeouts | Raise `E2E_TX_TIMEOUT_MS`. Consensus with LLM calls can take minutes per transaction. |
 | "Rate limit exceeded" in the log | The run already waits and retries. If it still gives up, lower `E2E_RPC_PER_MIN` (for example 15). |
+| `Unexpected token '<', "<!DOCTYPE "... is not valid JSON`, or HTTP 502/503/504 | The gateway in front of Studio dropped out for a moment. The run already waits (3 s, doubling up to 30 s) and retries up to 6 times; the log shows "the RPC gateway answered with …". If it still gives up, the endpoint is down: re-run later. |
 | `P01` shows long lengths refused | The node rejects long read arguments. Reads fall back to the local rules; check `O02` to see whether long writes work. |
 
 A full run makes dozens of transactions and several of them involve LLM consensus. The first live run took about

@@ -183,7 +183,11 @@ export async function createLiveWorld(options: WorldOptions): Promise<World & { 
 
   // The public endpoint allows 30 requests a minute; stay below it and retry when it still asks to slow down.
   const perMinute = Math.max(1, Number(process.env.E2E_RPC_PER_MIN ?? 24));
-  installRpcThrottle({ urls: [chain.rpcUrls.default.http[0]], perWindow: perMinute, log });
+  installRpcThrottle({
+    urls: [chain.rpcUrls.default.http[0], ...(endpoint ? [endpoint] : [])],
+    perWindow: perMinute,
+    log,
+  });
   log(`  network: ${chain.name ?? networkName} (${endpoint ?? "default endpoint"}), at most ${perMinute} requests a minute`);
   for (const role of ["owner", "alice", "bob", "carol"] as const) {
     await ensureFunded(clients[role], role, addrs[role], log);

@@ -7,16 +7,23 @@
  *
  *   1. a sliding window that spaces requests so the limit is not reached in the first place, and
  *   2. a retry with a growing pause for the rare answer that still says "rate limit" (or HTTP 429).
+ *
+ * A third kind of answer is retried as well: a gateway hiccup. When the proxy in front of Studio drops out for a
+ * moment it replies with HTTP 502/503/504 or with an HTML error page instead of JSON-RPC, which genlayer-js reports as
+ * `Unexpected token '<', "<!DOCTYPE "... is not valid JSON`. That says nothing about the request, so it is repeated
+ * after a few seconds instead of failing the check that happened to be running.
  */
 
 export interface ThrottleOptions {
   /** Requests allowed per window (default 24, below the documented 30). */
   perWindow?: number;
   windowMs?: number;
-  /** How often a rate-limited request is retried before the error is passed on. */
+  /** How often a rate-limited or gateway-failed request is retried before the answer is passed on. */
   maxRetries?: number;
   /** First pause after a rate-limited answer; it doubles per retry up to a minute (default 5000). */
   pauseMs?: number;
+  /** First pause after a gateway error (502/503/504 or an HTML page); it doubles per retry up to 30 seconds (default 3000). */
+  gatewayPauseMs?: number;
   /** Only requests to these URLs are limited. */
   urls: string[];
   log?: (line: string) => void;
@@ -65,6 +72,16 @@ export function looksRateLimited(status: number, body: string): boolean {
   return body.length < 2_000 && /"error"/.test(body) && /rate limit|too many requests/i.test(body);
 }
 
+/**
+ * True for an answer that came from a struggling gateway rather than from the node: HTTP 502/503/504, or a body that is
+ * an HTML page (`<!DOCTYPE ...`, `<html ...`) where JSON-RPC was expected. A JSON-RPC answer always starts with `{` or `[`,
+ * so a real result is never mistaken for one.
+ */
+export function looksGatewayError(status: number, body: string): boolean {
+  if (status === 502 || status === 503 || status === 504) return true;
+  return /^\s*<(?:!doctype|html)\b/i.test(body);
+}
+
 /** Installs the wrapper on `globalThis.fetch`; returns a function that restores the original. */
 export function installRpcThrottle(options: ThrottleOptions): () => void {
   const original = globalThis.fetch;
@@ -81,10 +98,18 @@ export function installRpcThrottle(options: ThrottleOptions): () => void {
       await window.acquire();
       const response = await original(input, init);
       const text = await response.clone().text().catch(() => "");
-      if (!looksRateLimited(response.status, text) || attempt >= maxRetries) return response;
-      window.saturate();
-      const pause = Math.min(60_000, (options.pauseMs ?? 5_000) * 2 ** attempt);
-      options.log?.(`  the RPC endpoint asked to slow down; waiting ${Math.round(pause / 1000)}s (retry ${attempt + 1}/${maxRetries})`);
+      const rateLimited = looksRateLimited(response.status, text);
+      const gateway = !rateLimited && looksGatewayError(response.status, text);
+      if ((!rateLimited && !gateway) || attempt >= maxRetries) return response;
+      let pause: number;
+      if (rateLimited) {
+        window.saturate();
+        pause = Math.min(60_000, (options.pauseMs ?? 5_000) * 2 ** attempt);
+        options.log?.(`  the RPC endpoint asked to slow down; waiting ${Math.round(pause / 1000)}s (retry ${attempt + 1}/${maxRetries})`);
+      } else {
+        pause = Math.min(30_000, (options.gatewayPauseMs ?? 3_000) * 2 ** attempt);
+        options.log?.(`  the RPC gateway answered with ${response.status >= 500 ? `HTTP ${response.status}` : "an HTML page"}; waiting ${Math.round(pause / 1000)}s (retry ${attempt + 1}/${maxRetries})`);
+      }
       await sleep(pause);
     }
   };

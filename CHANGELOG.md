@@ -19,6 +19,10 @@ Fixes from the first live run on Studio. The contract is unchanged.
   quorum (`CONSENSUS_VALIDATOR_QUORUM_REACHED`, tx `0x4b6c600bed`). That entry reads `ERROR` but says nothing about the
   call; `receiptFailed` and `extractRevertReason` now skip it (`isQuorumCancellation`). This made `F04` fail and then
   `F06`/`F06.n` re-send `start_quest` into an already open quest. A non-fatal contract error is still a failure.
+- Fixed: a momentary gateway failure of the RPC endpoint (HTTP 502/503/504, or an HTML page instead of JSON, reported as
+  `Unexpected token '<', "<!DOCTYPE "...`) failed the check that was running (`F12`). The live run's fetch wrapper now
+  treats it like a rate limit: it waits 3 s (doubling, up to 30 s) and retries up to 6 times (`looksGatewayError`). App
+  reads do the same (`isGatewayHiccup`). The throttle now also covers a custom `GENLAYER_RPC` endpoint.
 - Added: checks `P01` and `O02` record which argument lengths the node accepts; `O01` records a refused resolve.
 - Added: tests for Studio-shaped receipts, the request limiter and the rate-limit retry.
 
