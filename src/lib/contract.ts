@@ -162,6 +162,18 @@ export function isRateLimited(error: unknown): boolean {
   return RATE_LIMIT.test(error instanceof Error ? error.message : String(error));
 }
 
+const GATEWAY_HICCUP =
+  /<!DOCTYPE|<html\b|Unexpected token '?<|Bad Gateway|Service (?:Temporarily )?Unavailable|Gateway Time-?out|\b(?:HTTP|status(?: code)?)[ :]*50[234]\b/i;
+
+/**
+ * True for a transient failure of the gateway in front of the node: HTTP 502/503/504, or an HTML error page where
+ * JSON was expected (genlayer-js reports that as `Unexpected token '<', "<!DOCTYPE "... is not valid JSON`). The
+ * request itself was fine, so, like a rate limit, it is worth repeating after a pause.
+ */
+export function isGatewayHiccup(error: unknown): boolean {
+  return GATEWAY_HICCUP.test(error instanceof Error ? error.message : String(error));
+}
+
 /** True when the node could not decode the request payload (seen with long read arguments on Studio). */
 export function isPayloadRejected(error: unknown): boolean {
   return /RLP|superfluous|invalid (?:data|params)/i.test(error instanceof Error ? error.message : String(error));
@@ -227,8 +239,9 @@ export class LiveGame implements GameApi {
         lastError = error;
         // A request the node cannot decode will not decode on a retry either.
         if (isPayloadRejected(error)) break;
-        // A rate limit needs a real pause (the public endpoint allows 30 requests a minute); other errors a short one.
-        await sleep(isRateLimited(error) ? 4000 * (attempt + 1) : 250 * (attempt + 1));
+        // A rate limit needs a real pause (the public endpoint allows 30 requests a minute), and so does a gateway
+        // hiccup (a 502/503/504 or an HTML page instead of JSON); other errors a short one.
+        await sleep(isRateLimited(error) || isGatewayHiccup(error) ? 4000 * (attempt + 1) : 250 * (attempt + 1));
       }
     }
     throw new GameError(`Read of ${functionName} failed: ${friendly(lastError)}`);

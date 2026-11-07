@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { genToWei, weiToGen, toBigInt, toBool, shortAddress, bpsToPercent, formatDuration, safeStringify } from "../lib/format";
 import { field, normalizeConfig, normalizeQuest, normalizeStats, asList } from "../lib/normalize";
-import { LiveGame, extractRevertReason, isPayloadRejected, isQuorumCancellation, isRateLimited, receiptFailed } from "../lib/contract";
+import { LiveGame, extractRevertReason, isGatewayHiccup, isPayloadRejected, isQuorumCancellation, isRateLimited, receiptFailed } from "../lib/contract";
 import { isSuccess, overallScore, rewardFor, rankIndex, nextRankAt, rankProgress, localActionProblem } from "../lib/rules";
 import { isAddress, resolveConfig } from "../lib/env";
 
@@ -172,6 +172,17 @@ describe("error classes", () => {
     expect(isRateLimited(new Error("RLP string ends with 383 superfluous bytes"))).toBe(false);
     expect(isPayloadRejected(new Error("An internal error was received. Details: RLP string ends with 383 superfluous bytes"))).toBe(true);
     expect(isPayloadRejected(new Error("Rate limit exceeded"))).toBe(false);
+  });
+  it("recognises a gateway hiccup and nothing else", () => {
+    expect(isGatewayHiccup(new Error('GenLayer RPC error (eth_gasPrice): Unexpected token \'<\', "<!DOCTYPE "... is not valid JSON'))).toBe(true);
+    expect(isGatewayHiccup(new Error("<html><head><title>502 Bad Gateway</title></head>"))).toBe(true);
+    expect(isGatewayHiccup(new Error("HTTP 503"))).toBe(true);
+    expect(isGatewayHiccup(new Error("HTTP request failed. Status: 504"))).toBe(true);
+    expect(isGatewayHiccup(new Error("Service Unavailable"))).toBe(true);
+    expect(isGatewayHiccup("504 Gateway Timeout")).toBe(true);
+    expect(isGatewayHiccup(new Error("Rate limit exceeded"))).toBe(false);
+    expect(isGatewayHiccup(new Error("Only the owner can do this"))).toBe(false);
+    expect(isGatewayHiccup(new Error("RLP string ends with 502 superfluous bytes"))).toBe(false);
   });
 });
 
