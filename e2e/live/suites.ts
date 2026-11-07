@@ -68,6 +68,32 @@ async function mustOk(label: string, work: Promise<TxOutcome>): Promise<TxOutcom
   return outcome;
 }
 
+/**
+ * resolve_quest is open to anyone and safe to repeat while the quest is still under review, so a failed attempt
+ * (for example validators that were cancelled after a quorum) is retried. Returns the last outcome and every error seen.
+ */
+async function resolveWithRetry(
+  caller: GameApi,
+  view: GameApi,
+  id: number,
+  attempts = 3,
+): Promise<{ outcome: TxOutcome; errors: string[] }> {
+  const errors: string[] = [];
+  let outcome = await caller.resolveQuest(id);
+  for (let attempt = 1; !outcome.ok && attempt < attempts; attempt++) {
+    errors.push(outcome.error ?? outcome.status);
+    if ((await view.getQuest(id)).status !== QuestStatus.SUBMITTED) break;
+    outcome = await caller.resolveQuest(id);
+  }
+  if (!outcome.ok) errors.push(outcome.error ?? outcome.status);
+  return { outcome, errors };
+}
+
+async function mustResolve(label: string, caller: GameApi, view: GameApi, id: number): Promise<void> {
+  const { outcome, errors } = await resolveWithRetry(caller, view, id);
+  if (!outcome.ok) throw new AssertionError(`${label} failed after ${errors.length} attempt(s): ${errors.join(" | ")}`);
+}
+
 async function treasuryHolds(api: GameApi): Promise<string> {
   const t = await api.getTreasury();
   expect(t.invariantHolds, `books do not balance (deposited ${t.totalDeposited}, pool ${t.rewardPool}, reserved ${t.reservedRewards}, paid ${t.totalPaidOut})`);
@@ -92,7 +118,7 @@ async function playToVerdict(api: GameApi, tier: number, attempt: number, world:
   let plan = goodPlan(quest.scenario, attempt);
   if ((await api.validateAction(plan)) !== "") plan = goodPlan("the way ahead is blocked", attempt);
   await mustOk("submit_action", api.submitAction(id, plan));
-  await mustOk("resolve_quest", api.resolveQuest(id));
+  await mustResolve("resolve_quest", api, api, id);
   return api.getQuest(id);
 }
 
@@ -178,7 +204,7 @@ export async function runSuites(world: World, rec: Recorder): Promise<void> {
     await rec.check("F06", "functional", "Resolution scores the action and the contract derives the verdict itself", async () => {
       const before = await view.getConfig();
       const stats0 = await view.getStats(alice.caller);
-      await mustOk("resolve_quest", alice.resolveQuest(quest0.questId));
+      await mustResolve("resolve_quest", alice, view, quest0.questId);
       const q = await view.getQuest(quest0.questId);
       expect(q.status === QuestStatus.SUCCESS || q.status === QuestStatus.FAILED, `quest left in status ${q.status} after resolve`);
       for (const [name, value] of [["relevance", q.relevance], ["plausibility", q.plausibility], ["creativity", q.creativity]] as const) {
@@ -466,7 +492,7 @@ export async function runSuites(world: World, rec: Recorder): Promise<void> {
       let plan = goodPlan((await view.getQuest(bobQuest)).scenario, 2);
       if ((await view.validateAction(plan)) !== "") plan = goodPlan("the way ahead is blocked", 2);
       await mustOk("submit_action while paused", bob.submitAction(bobQuest, plan));
-      await mustOk("resolve_quest while paused", bob.resolveQuest(bobQuest));
+      await mustResolve("resolve_quest while paused", bob, view, bobQuest);
       const q = await view.getQuest(bobQuest);
       expect(q.status === QuestStatus.SUCCESS || q.status === QuestStatus.FAILED, `quest left in status ${q.status} after resolve`);
       return `${describeRejection(r)}; bob's quest #${bobQuest} judged while paused: ${q.status === QuestStatus.SUCCESS ? "victory" : "defeat"}`;
@@ -528,10 +554,13 @@ export async function runSuites(world: World, rec: Recorder): Promise<void> {
       const id = await view.getActiveQuestId(carol.caller);
       await mustOk("submit_action", carol.submitAction(id, SOCIAL_ENGINEERING));
       // The judges may legitimately fail to produce a usable answer; that is an observation, not a harness error.
-      const resolved = await carol.resolveQuest(id);
+      const { outcome: resolved, errors } = await resolveWithRetry(carol, view, id);
       const q = await view.getQuest(id);
       const stats = await view.getStats(carol.caller);
-      const resolveNote = resolved.ok ? "" : `resolve_quest was refused (${resolved.error ?? resolved.status}); `;
+      const resolveNote =
+        errors.length === 0
+          ? ""
+          : `${errors.length} resolve attempt(s) failed (${errors.join(" | ")}); ${resolved.ok ? "a later attempt succeeded" : "the quest stayed under review"}; `;
       return (
         resolveNote +
         `status ${q.statusLabel}, scores r${q.relevance}/p${q.plausibility}/c${q.creativity} = ${q.score}, ` +

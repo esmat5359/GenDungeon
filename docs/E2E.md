@@ -18,6 +18,10 @@ report you can commit as evidence.
 >    while short ones worked. The suite now uses compact plans, falls back to the local length rules when a
 >    `validate_action` read is refused, and records which lengths the node accepts (`P01`, `O02`).
 >
+> Findings from the second live run: long **writes** work (`O02`), long **reads** above roughly 200 characters are refused by
+> the node, and `resolve_quest` sometimes fails for infrastructure reasons (validators cancelled after a quorum), so the suite
+> retries it.
+>
 > Treat the next live run as the first real test of those fixes.
 
 ## Run it in a GitHub Codespace

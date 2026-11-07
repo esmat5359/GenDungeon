@@ -12,6 +12,9 @@ Fixes from the first live run on Studio. The contract is unchanged.
   before retrying a rate limit.
 - Fixed: `validate_action` reads with a long argument were refused by the node (`RLP ... superfluous bytes`). The client
   falls back to the local length rules instead of failing, and does not retry an undecodable request.
+- Fixed: the live run failed a check when validators were cancelled after a quorum (`A10`). `resolve_quest` is open to anyone and
+  safe to repeat while a quest is under review, so the suite now retries it (up to 3 attempts) and lists every error.
+  A failure without a readable reason now shows the leader's outcome and the vote tally instead of a blank message.
 - Added: checks `P01` and `O02` record which argument lengths the node accepts; `O01` records a refused resolve.
 - Added: tests for Studio-shaped receipts, the request limiter and the rate-limit retry.
 
