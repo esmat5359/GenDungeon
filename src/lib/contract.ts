@@ -72,7 +72,27 @@ export function extractRevertReason(receipt: unknown): string {
   };
   walk(receipt, 0);
   const useful = found.find((text) => /[a-z]{3}/i.test(text) && !/^(success|agree|return)$/i.test(text));
-  return (useful ?? "The transaction failed on-chain.").slice(0, 300);
+  return (useful ?? describeLeaderFailure(receipt) ?? "The transaction failed on-chain.").slice(0, 300);
+}
+
+/** A compact account of a leader receipt when no readable reason was found, so a failure is never a blank. */
+function describeLeaderFailure(receipt: any): string | undefined {
+  const parts: string[] = [];
+  for (const leader of leaderReceipts(receipt)) {
+    const outcome = [leader?.execution_result, leader?.result?.status].filter(Boolean).join("/");
+    if (outcome) parts.push(`leader ${outcome}`);
+    for (const key of ["stderr", "stdout"]) {
+      const text = leader?.genvm_result?.[key];
+      if (typeof text === "string" && text.trim()) parts.push(`${key}: ${text.trim().slice(-120)}`);
+    }
+  }
+  const votes = (receipt?.consensus_data ?? receipt?.consensusData)?.votes;
+  if (votes && typeof votes === "object") {
+    const tally: Record<string, number> = {};
+    for (const vote of Object.values(votes)) tally[String(vote)] = (tally[String(vote)] ?? 0) + 1;
+    if (Object.keys(tally).length) parts.push(`votes ${JSON.stringify(tally)}`);
+  }
+  return parts.length ? `The transaction failed on-chain (${parts.join("; ")}).` : undefined;
 }
 
 /**

@@ -100,6 +100,14 @@ describe("Studio receipts", () => {
     expect(receiptFailed(studioReceipt({ execution_result: "SUCCESS", result: { status: "return", payload: null } }))).toBe(false);
     expect(receiptFailed(studioReceipt({ execution_result: "SUCCESS" }))).toBe(false);
   });
+  it("describes a failure that carries no readable reason", () => {
+    const text = extractRevertReason({
+      statusName: "ACCEPTED",
+      consensus_data: { leader_receipt: [{ execution_result: "ERROR", result: { status: "contract_error" } }], votes: { a: "agree", b: "disagree", c: "agree" } },
+    });
+    expect(text).toContain("leader ERROR/contract_error");
+    expect(text).toContain('"agree":2');
+  });
   it("reads the camelCase spelling too", () => {
     expect(receiptFailed({ status: "ACCEPTED", consensusData: { leaderReceipt: { executionResult: "ERROR" } } })).toBe(true);
   });
