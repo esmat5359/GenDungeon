@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { genToWei, weiToGen, toBigInt, toBool, shortAddress, bpsToPercent, formatDuration, safeStringify } from "../lib/format";
 import { field, normalizeConfig, normalizeQuest, normalizeStats, asList } from "../lib/normalize";
-import { extractRevertReason, receiptFailed } from "../lib/contract";
+import { LiveGame, extractRevertReason, isPayloadRejected, isRateLimited, receiptFailed } from "../lib/contract";
 import { isSuccess, overallScore, rewardFor, rankIndex, nextRankAt, rankProgress, localActionProblem } from "../lib/rules";
 import { isAddress, resolveConfig } from "../lib/env";
 
@@ -73,6 +73,97 @@ describe("receipt helpers", () => {
     expect(receiptFailed({ statusName: "ACCEPTED", txExecutionResultName: "FINISHED_WITH_ERROR" })).toBe(true);
     expect(receiptFailed({ statusName: "UNDETERMINED" })).toBe(true);
     expect(receiptFailed(undefined)).toBe(true);
+  });
+});
+
+/** The shape of a Studio receipt after genlayer-js has simplified it (see decodeLocalnetTransaction). */
+function studioReceipt(leader: Record<string, unknown>, statusName = "ACCEPTED") {
+  return { statusName, status_name: statusName, consensus_data: { leader_receipt: [leader], votes: {} } };
+}
+
+describe("Studio receipts", () => {
+  it("treats a reverted call as failed even though consensus accepted it", () => {
+    const reverted = studioReceipt({
+      execution_result: "ERROR",
+      result: { status: "rollback", payload: "Only the owner can do this" },
+    });
+    expect(receiptFailed(reverted)).toBe(true);
+    expect(extractRevertReason(reverted)).toBe("Only the owner can do this");
+  });
+  it("recognises each failure marker on its own", () => {
+    expect(receiptFailed(studioReceipt({ execution_result: "ERROR" }))).toBe(true);
+    expect(receiptFailed(studioReceipt({ result: { status: "rollback", payload: "x" } }))).toBe(true);
+    expect(receiptFailed(studioReceipt({ result: { status: "contract_error", payload: "x" } }))).toBe(true);
+    expect(receiptFailed(studioReceipt({ genvm_result: { status: "error" } }))).toBe(true);
+  });
+  it("does not flag a successful call", () => {
+    expect(receiptFailed(studioReceipt({ execution_result: "SUCCESS", result: { status: "return", payload: null } }))).toBe(false);
+    expect(receiptFailed(studioReceipt({ execution_result: "SUCCESS" }))).toBe(false);
+  });
+  it("reads the camelCase spelling too", () => {
+    expect(receiptFailed({ status: "ACCEPTED", consensusData: { leaderReceipt: { executionResult: "ERROR" } } })).toBe(true);
+  });
+});
+
+describe("error classes", () => {
+  it("separates a rate limit from an undecodable payload", () => {
+    expect(isRateLimited(new Error("An unknown RPC error occurred. Details: Rate limit exceeded: 30 requests per minute"))).toBe(true);
+    expect(isRateLimited(new Error("HTTP 429"))).toBe(true);
+    expect(isRateLimited(new Error("RLP string ends with 383 superfluous bytes"))).toBe(false);
+    expect(isPayloadRejected(new Error("An internal error was received. Details: RLP string ends with 383 superfluous bytes"))).toBe(true);
+    expect(isPayloadRejected(new Error("Rate limit exceeded"))).toBe(false);
+  });
+});
+
+describe("LiveGame against a fake node", () => {
+  const address = "0x0000000000000000000000000000000000000001" as const;
+  const failedReceipt = studioReceipt({ execution_result: "ERROR", result: { status: "rollback", payload: "Quest is not awaiting resolution" } });
+
+  it("reports a reverted write as not ok, with the contract's reason", async () => {
+    const writer = {
+      writeContract: async () => "0xabc",
+      waitForTransactionReceipt: async () => failedReceipt,
+    };
+    const game = new LiveGame(address, {} as any, writer as any, "0xme", { pollMs: 1, timeoutMs: 10 });
+    const outcome = await game.resolveQuest(1);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.status).toBe("ACCEPTED");
+    expect(outcome.error).toBe("Quest is not awaiting resolution");
+  });
+
+  it("falls back to the local length rules when the node cannot decode a long read", async () => {
+    const reader = {
+      readContract: async () => {
+        throw new Error("An internal error was received. Details: RLP string ends with 383 superfluous bytes");
+      },
+    };
+    let calls = 0;
+    const counting = { readContract: async (a: unknown) => (calls++, reader.readContract()) };
+    const game = new LiveGame(address, counting as any, null, "", { pollMs: 1 });
+    expect(await game.validateAction("x".repeat(1001))).toBe("too_long");
+    expect(game.lastValidationSource).toBe("local");
+    expect(calls).toBe(1); // an undecodable payload is not retried
+  });
+
+  it("retries a rate-limited read instead of failing at once", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const reader = {
+        readContract: async () => {
+          if (++calls < 3) throw new Error("Rate limit exceeded: 30 requests per minute");
+          return "";
+        },
+      };
+      const game = new LiveGame(address, reader as any, null, "", { pollMs: 1 });
+      const pending = game.validateAction("a perfectly fine action");
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await pending).toBe("");
+      expect(calls).toBe(3);
+      expect(game.lastValidationSource).toBe("chain");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

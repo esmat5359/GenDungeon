@@ -22,6 +22,7 @@ import {
   normalizeTreasury,
 } from "./normalize";
 import { safeStringify, toBigInt, toNumber, toText } from "./format";
+import { localActionProblem } from "./rules";
 import { GameError, type TxOutcome, type TxStatusListener } from "./types";
 
 const TERMINAL = new Set<string>([
@@ -40,7 +41,17 @@ const FAILED_STATUSES = new Set<string>([
   TransactionStatus.VALIDATORS_TIMEOUT,
 ]);
 
-const ERROR_KEYS = new Set(["error", "stderr", "message", "result", "reason"]);
+const ERROR_KEYS = new Set(["error", "stderr", "message", "result", "reason", "payload"]);
+
+/** Result kinds of a contract call that mean the call ended in an error (a `UserError` reads as "rollback"). */
+const FAILED_RESULT_KINDS = new Set(["rollback", "contract_error", "error", "no_leaders"]);
+
+function leaderReceipts(receipt: any): any[] {
+  const data = receipt?.consensus_data ?? receipt?.consensusData;
+  const leader = data?.leader_receipt ?? data?.leaderReceipt;
+  if (!leader) return [];
+  return Array.isArray(leader) ? leader : [leader];
+}
 
 /** Digs a short, human-readable failure reason out of a receipt. */
 export function extractRevertReason(receipt: unknown): string {
@@ -64,12 +75,37 @@ export function extractRevertReason(receipt: unknown): string {
   return (useful ?? "The transaction failed on-chain.").slice(0, 300);
 }
 
-/** True when the receipt shows the contract call itself ended in an error. */
+/**
+ * True when the receipt shows the contract call itself ended in an error.
+ *
+ * A reverted call still reaches the consensus status ACCEPTED: the validators agree that the call failed. Where the
+ * failure is recorded depends on the network. A consensus-contract receipt carries `txExecutionResultName`; a Studio
+ * receipt has no such field and records the outcome on the leader's receipt instead (`execution_result` is "ERROR"
+ * and `result.status` is "rollback" for a `UserError`).
+ */
 export function receiptFailed(receipt: any): boolean {
   if (!receipt) return true;
-  const status = String(receipt.statusName ?? receipt.status ?? "");
+  const status = String(receipt.statusName ?? receipt.status_name ?? receipt.status ?? "");
   if (FAILED_STATUSES.has(status)) return true;
-  return String(receipt.txExecutionResultName ?? "") === "FINISHED_WITH_ERROR";
+  if (String(receipt.txExecutionResultName ?? "") === "FINISHED_WITH_ERROR") return true;
+  for (const leader of leaderReceipts(receipt)) {
+    if (String(leader?.execution_result ?? leader?.executionResult ?? "").toUpperCase() === "ERROR") return true;
+    const kind = leader?.result?.status ?? leader?.genvm_result?.status;
+    if (typeof kind === "string" && FAILED_RESULT_KINDS.has(kind.toLowerCase())) return true;
+  }
+  return false;
+}
+
+const RATE_LIMIT = /rate limit|too many requests|\b429\b/i;
+
+/** True for an RPC error that only asks the caller to slow down. */
+export function isRateLimited(error: unknown): boolean {
+  return RATE_LIMIT.test(error instanceof Error ? error.message : String(error));
+}
+
+/** True when the node could not decode the request payload (seen with long read arguments on Studio). */
+export function isPayloadRejected(error: unknown): boolean {
+  return /RLP|superfluous|invalid (?:data|params)/i.test(error instanceof Error ? error.message : String(error));
 }
 
 function friendly(error: unknown): string {
@@ -94,6 +130,8 @@ export class LiveGame implements GameApi {
   readonly mode = "live" as const;
   readonly address: `0x${string}`;
   readonly caller: string;
+  /** Where the last validateAction answer came from: the contract, or the local length rules after a payload error. */
+  lastValidationSource: "chain" | "local" = "chain";
   private readonly reader: AppGenLayerClient;
   private readonly writer: AppGenLayerClient | null;
   private readonly pollMs: number;
@@ -119,7 +157,7 @@ export class LiveGame implements GameApi {
   // ------------------------------------------------------------------ reads
   private async read(functionName: string, args: unknown[] = []): Promise<unknown> {
     let lastError: unknown;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 6; attempt++) {
       try {
         return await this.reader.readContract({
           address: this.address,
@@ -128,7 +166,10 @@ export class LiveGame implements GameApi {
         });
       } catch (error) {
         lastError = error;
-        await sleep(250 * (attempt + 1));
+        // A request the node cannot decode will not decode on a retry either.
+        if (isPayloadRejected(error)) break;
+        // A rate limit needs a real pause (the public endpoint allows 30 requests a minute); other errors a short one.
+        await sleep(isRateLimited(error) ? 4000 * (attempt + 1) : 250 * (attempt + 1));
       }
     }
     throw new GameError(`Read of ${functionName} failed: ${friendly(lastError)}`);
@@ -156,7 +197,19 @@ export class LiveGame implements GameApi {
     return toBigInt(await this.read("quote_reward", [tier, score]));
   }
   async validateAction(action: string) {
-    return toText(await this.read("validate_action", [action]));
+    try {
+      const answer = toText(await this.read("validate_action", [action]));
+      this.lastValidationSource = "chain";
+      return answer;
+    } catch (error) {
+      // The dry-run is a convenience; submit_action runs the same checks on-chain. When the node refuses to decode
+      // a long argument, fall back to the length rules so the caller is not blocked by a read.
+      if (isPayloadRejected(error)) {
+        this.lastValidationSource = "local";
+        return localActionProblem(action);
+      }
+      throw error;
+    }
   }
   async getQuest(questId: number) {
     return normalizeQuest(await this.read("get_quest", [questId]));
