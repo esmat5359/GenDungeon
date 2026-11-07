@@ -6,7 +6,7 @@ Four layers, from the contract outward. Each layer exists because the one below 
 |---|---|---|---|
 | Contract tests | `tests/` (7 files, 121 test functions, 276 cases) | `npm run test:contract` | The contract's rules, run in GenVM's direct mode with the LLM mocked |
 | Mutation testing | `scripts/mutation_check.py` | `npm run mutation` | The contract tests notice 14 deliberately introduced bugs |
-| App and harness tests | `src/__tests__/`, `e2e/live/dry.test.ts` (52 cases) | `npm test` | Client formulas match the contract, the in-memory model behaves, the end-to-end suites can fail |
+| App and harness tests | `src/__tests__/`, `e2e/live/*.test.ts` (68 cases) | `npm test` | Client formulas match the contract, the in-memory model behaves, the end-to-end suites can fail |
 | Live end-to-end | `e2e/live/` | `npm run e2e:live` | The same behaviour on a real GenLayer network ([E2E.md](E2E.md)) |
 
 ## 1. Contract tests

@@ -3,11 +3,22 @@
 `e2e/live/` deploys a **fresh** copy of the contract to GenLayer, plays it with four accounts, attacks it, and writes a
 report you can commit as evidence.
 
-> **Status of this suite.** It was written and verified against the in-memory model of the contract (including with
-> injected faults, see [TESTING.md](TESTING.md)). It had **not been run against a real GenLayer network** when it was
-> delivered, because the machine it was built on could not reach GenLayer Studio. Treat the first live run as the first
-> real test of the script itself. The report generator says so honestly: a run that could not reach the network is
-> reported as `BLOCKED` and executes nothing.
+> **Status of this suite.** The first live run on Studio (see `reports/`) exposed three problems in the script itself,
+> all fixed since:
+>
+> 1. **Reverted calls were reported as accepted.** On Studio a call that the contract refuses still reaches the
+>    consensus status `ACCEPTED`; the refusal is recorded on the leader's receipt (`execution_result` is `ERROR`,
+>    `result.status` is `rollback`). The first version only looked at `txExecutionResultName`, which Studio does not
+>    send, so every attack check (`A01` to `A11`) saw "accepted" and failed even though the contract had refused the
+>    call and the state was untouched.
+> 2. **The public endpoint allows 30 requests a minute.** Polling every two seconds and many reads exceeded it. The run
+>    now spaces requests (default 24 a minute, `E2E_RPC_PER_MIN`), polls every four seconds, and retries a
+>    rate-limited answer with a growing pause.
+> 3. **Read arguments of a few hundred bytes were rejected by the node** (`RLP string ends with … superfluous bytes`),
+>    while short ones worked. The suite now uses compact plans, falls back to the local length rules when a
+>    `validate_action` read is refused, and records which lengths the node accepts (`P01`, `O02`).
+>
+> Treat the next live run as the first real test of those fixes.
 
 ## Run it in a GitHub Codespace
 
@@ -80,7 +91,9 @@ Kinds: **functional** (a feature works), **economic** (the books balance), **adv
 | A11 | adversarial | Replays are refused: double claim, re-submit, re-resolve |
 | A12 | adversarial | A quest cannot be expired early; with `E2E_SLOW=1` the run waits out the time limit and anyone can then close it |
 | A13 | economic | After everything above the books still balance |
-| O01 | observed | What the judges do with persuasion that contains no trigger phrase |
+| O01 | observed | What the judges do with persuasion that contains no trigger phrase (also records a refused resolve) |
+| P01 | observed | Which read argument lengths (100 to 1000 characters) the node accepts |
+| O02 | observed | Whether a long action (about 600 characters) can be submitted on-chain |
 | A14 | economic | Final accounting |
 
 ### How a rejection is proven
@@ -134,6 +147,7 @@ passed, `1` a check failed or the run was interrupted, `2` the network was unrea
 | `E2E_MAX_ATTEMPTS` | 3 | plays tried to obtain a victory |
 | `E2E_TIMEOUT_MIN` | 90 | hard limit for the run |
 | `E2E_TX_TIMEOUT_MS` | 600000 | wait per transaction |
+| `E2E_RPC_PER_MIN` | 24 | requests a minute the run may send to the RPC endpoint (the public one allows 30) |
 | `E2E_SLOW` | 0 | also wait out the real quest time limit (about 5 minutes) |
 | `E2E_FAUCET_AMOUNT` | ladder | amount passed to `sim_fundAccount` |
 | `E2E_MIN_BALANCE_WEI` | 0.05 GEN | balance each account needs before the run |
@@ -147,6 +161,8 @@ passed, `1` a check failed or the run was interrupted, `2` the network was unrea
 | "contract address was not found in the receipt" | The receipt is printed in the log. Take the address from Studio and re-run with `E2E_CONTRACT=0x…`. |
 | Many "skipped" | The judges were strict. Raise `E2E_MAX_ATTEMPTS`. |
 | Timeouts | Raise `E2E_TX_TIMEOUT_MS`. Consensus with LLM calls can take minutes per transaction. |
+| "Rate limit exceeded" in the log | The run already waits and retries. If it still gives up, lower `E2E_RPC_PER_MIN` (for example 15). |
+| `P01` shows long lengths refused | The node rejects long read arguments. Reads fall back to the local rules; check `O02` to see whether long writes work. |
 
-A full run makes dozens of transactions and several of them involve LLM consensus, so expect it to take a while; the
-time was not measured because the suite had not yet run on a real network.
+A full run makes dozens of transactions and several of them involve LLM consensus. The first live run took about
+eight minutes while most checks failed early; with request spacing a complete run takes noticeably longer.

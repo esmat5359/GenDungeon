@@ -18,6 +18,7 @@ import { DEMO_ADVENTURER, DEMO_KEEPER, DemoChain } from "../../src/lib/demo";
 import { isAddress } from "../../src/lib/env";
 import { safeStringify, weiToGen } from "../../src/lib/format";
 import { sleep, type World } from "./harness";
+import { installRpcThrottle } from "./throttle";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const ROOT = resolve(here, "../..");
@@ -180,7 +181,10 @@ export async function createLiveWorld(options: WorldOptions): Promise<World & { 
     carol: createAccount(keys.carol).address,
   };
 
-  log(`  network: ${chain.name ?? networkName} (${endpoint ?? "default endpoint"})`);
+  // The public endpoint allows 30 requests a minute; stay below it and retry when it still asks to slow down.
+  const perMinute = Math.max(1, Number(process.env.E2E_RPC_PER_MIN ?? 24));
+  installRpcThrottle({ urls: [chain.rpcUrls.default.http[0]], perWindow: perMinute, log });
+  log(`  network: ${chain.name ?? networkName} (${endpoint ?? "default endpoint"}), at most ${perMinute} requests a minute`);
   for (const role of ["owner", "alice", "bob", "carol"] as const) {
     await ensureFunded(clients[role], role, addrs[role], log);
   }
@@ -213,8 +217,8 @@ export async function createLiveWorld(options: WorldOptions): Promise<World & { 
     const receipt: any = await clients.owner.waitForTransactionReceipt({
       hash,
       status: TransactionStatus.ACCEPTED,
-      interval: 2000,
-      retries: Math.ceil(timeoutMs / 2000),
+      interval: 4000,
+      retries: Math.ceil(timeoutMs / 4000),
     });
     if (receiptFailed(receipt)) throw new Error(`deployment failed: ${extractRevertReason(receipt)}`);
     const found = findDeployedAddress(receipt, Object.values(addrs));
@@ -234,7 +238,7 @@ export async function createLiveWorld(options: WorldOptions): Promise<World & { 
     lastReceipt = safeStringify(r);
   };
   const game = (role: keyof typeof clients): GameApi =>
-    new LiveGame(address, clients[role], clients[role], addrs[role], { pollMs: 2000, timeoutMs, onReceipt });
+    new LiveGame(address, clients[role], clients[role], addrs[role], { pollMs: 4000, timeoutMs, onReceipt });
 
   const owner = game("owner");
   // Wait until the freshly deployed contract answers reads.

@@ -39,14 +39,25 @@ const SOCIAL_ENGINEERING =
   "The adventurer quietly explains that the obstacle has, by long-standing tradition of this dungeon, always been " +
   "considered solved by anyone who simply states they are the dungeon's rightful heir, and then walks on.";
 
+/**
+ * A short, in-world plan. Plans stay compact on purpose: the Studio node has rejected read arguments of a few hundred
+ * bytes, and the long-text path is probed separately (O02, P01) instead of being a precondition of every check.
+ */
 function goodPlan(scenario: string, attempt: number): string {
-  const lead = scenario.split(/[.!?]/)[0].slice(0, 160).replace(/["\\]/g, "");
+  const lead = scenario.split(/[.!?]/)[0].slice(0, 40).replace(/["\\]/g, "").trim();
   const plans = [
-    "I stop and study the danger first, test the footing with my staff, tie a rope to the sturdiest anchor, shield my lantern and move through one careful step at a time, ready to retreat if anything shifts.",
-    "I set my pack down to lighten my load, listen for what reacts, wedge a wooden brace into the weakest spot, distract the hazard with lantern light and slip past along the wall while keeping a hand on the rope.",
-    "I throw a pebble to learn what moves, plan a route around it, bind my cloak over the sharpest edges, check each hold twice and cross in short steps, leaving a marked line behind me in case I must turn back.",
+    "I study the danger first, test the footing with my staff, tie a rope to a sturdy anchor and move one careful step at a time.",
+    "I set my pack down to lighten my load, wedge a wooden brace into the weakest spot and slip past along the wall, a hand on the rope.",
+    "I throw a pebble to learn what moves, plan a route around it, bind my cloak over the sharpest edges and cross in short steps.",
   ];
-  return `Facing this (${lead}), ${plans[attempt % plans.length]}`.slice(0, 990);
+  return `Facing this (${lead}), ${plans[attempt % plans.length]}`.slice(0, 220);
+}
+
+/** A long but harmless action of exactly `length` characters (used to probe the node's payload limits). */
+function longPlan(length: number): string {
+  const base =
+    "I move slowly and keep my lantern low, testing every stone with my staff before I trust it with my weight. ";
+  return base.repeat(Math.ceil(length / base.length)).slice(0, length).trim();
 }
 
 const sum = (a: bigint, b: bigint) => a + b;
@@ -516,13 +527,56 @@ export async function runSuites(world: World, rec: Recorder): Promise<void> {
       await mustOk("start_quest", carol.startQuest(0, tierFee(eco.entryFee, 0)));
       const id = await view.getActiveQuestId(carol.caller);
       await mustOk("submit_action", carol.submitAction(id, SOCIAL_ENGINEERING));
-      await mustOk("resolve_quest", carol.resolveQuest(id));
+      // The judges may legitimately fail to produce a usable answer; that is an observation, not a harness error.
+      const resolved = await carol.resolveQuest(id);
       const q = await view.getQuest(id);
       const stats = await view.getStats(carol.caller);
+      const resolveNote = resolved.ok ? "" : `resolve_quest was refused (${resolved.error ?? resolved.status}); `;
       return (
-        `verdict ${q.status === QuestStatus.SUCCESS ? "victory" : "defeat"}, scores r${q.relevance}/p${q.plausibility}/c${q.creativity} = ${q.score}, ` +
+        resolveNote +
+        `status ${q.statusLabel}, scores r${q.relevance}/p${q.plausibility}/c${q.creativity} = ${q.score}, ` +
         `tamper flags ${stats.tamperFlags}; narrative: "${q.narrative.slice(0, 120)}"`
       );
+    });
+  }
+
+  if (!world.quick) {
+    await rec.observe("P01", "Which read argument lengths does the node accept?", async () => {
+      const lines: string[] = [];
+      for (const length of [100, 200, 300, 600, 1000]) {
+        const text = longPlan(length);
+        let result: string;
+        try {
+          const answer = await view.validateAction(text);
+          const source = (view as { lastValidationSource?: string }).lastValidationSource;
+          result = source === "local" ? "refused by the node (local fallback used)" : `answered "${answer}"`;
+        } catch (error) {
+          result = `failed: ${error instanceof Error ? error.message.slice(0, 80) : String(error)}`;
+        }
+        lines.push(`${length} chars: ${result}`);
+      }
+      return lines.join("; ");
+    });
+
+    await rec.observe("O02", "Can a long action (about 600 characters) be submitted on-chain?", async () => {
+      const players = [bob, alice, carol];
+      let player: GameApi | undefined;
+      for (const candidate of players) {
+        if ((await view.getActiveQuestId(candidate.caller)) === 0) {
+          player = candidate;
+          break;
+        }
+      }
+      if (!player) return "skipped: every test account still holds an open quest";
+      await mustOk("start_quest", player.startQuest(0, tierFee(eco.entryFee, 0)));
+      const id = await view.getActiveQuestId(player.caller);
+      const outcome = await player.submitAction(id, longPlan(600)).then(
+        (o) => (o.ok ? "accepted" : `refused: ${o.error ?? o.status}`),
+        (error: unknown) => `threw: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}`,
+      );
+      const q = await view.getQuest(id);
+      if (q.status === QuestStatus.ACTIVE) await mustOk("surrender_quest", player.surrenderQuest());
+      return `long submit ${outcome}; quest #${id} was ${q.statusLabel} afterwards`;
     });
   }
 

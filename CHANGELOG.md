@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+Fixes from the first live run on Studio. The contract is unchanged.
+
+- Fixed: a reverted call was reported as accepted. Studio records the refusal on the leader receipt, not in
+  `txExecutionResultName`; `receiptFailed` now reads `execution_result` and `result.status`, and the revert reason is
+  taken from `result.payload`.
+- Fixed: the live run exceeded the endpoint's 30 requests a minute. Requests are now spaced (`E2E_RPC_PER_MIN`), polling
+  is every four seconds, and a rate-limited answer is retried with a growing pause. Reads in the app also wait longer
+  before retrying a rate limit.
+- Fixed: `validate_action` reads with a long argument were refused by the node (`RLP ... superfluous bytes`). The client
+  falls back to the local length rules instead of failing, and does not retry an undecodable request.
+- Added: checks `P01` and `O02` record which argument lengths the node accepts; `O01` records a refused resolve.
+- Added: tests for Studio-shaped receipts, the request limiter and the rate-limit retry.
+
 ## 2.0.0
 
 A rebuild of the contract's decision logic, a new web app, and a verification pipeline. The v1 contract keeps working;

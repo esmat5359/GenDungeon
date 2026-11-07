@@ -9,6 +9,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { LiveGame } from "../../src/lib/contract";
 import { QuestStatus } from "../../src/lib/types";
 import { DemoChain } from "../../src/lib/demo";
 import { Recorder, expectRejected, type World } from "./harness";
@@ -268,5 +269,30 @@ describe("a refusal only counts when the contract refused", () => {
     for (const status of ["UNDETERMINED", "LEADER_TIMEOUT", "VALIDATORS_TIMEOUT", "CANCELED"]) {
       await expect(expectRejected(world, outcome({ status }), "x")).rejects.toThrow(/no verdict/);
     }
+  });
+});
+
+describe("expectRejected on Studio-shaped receipts", () => {
+  const address = "0x0000000000000000000000000000000000000001" as const;
+  const world = { lastReceiptText: () => "" } as unknown as World;
+  const receipt = (leader: Record<string, unknown>) => ({
+    statusName: "ACCEPTED",
+    consensus_data: { leader_receipt: [leader] },
+  });
+  const gameWith = (r: unknown) =>
+    new LiveGame(address, {} as any, { writeContract: async () => "0xabc", waitForTransactionReceipt: async () => r } as any, "0xme", {
+      pollMs: 1,
+      timeoutMs: 10,
+    });
+
+  it("accepts a call the contract reverted, and reads the reason from the receipt", async () => {
+    const game = gameWith(receipt({ execution_result: "ERROR", result: { status: "rollback", payload: "Only the owner can do this" } }));
+    const result = await expectRejected(world, () => game.setPaused(true), "only the owner");
+    expect(result.reasonVerified).toBe(true);
+  });
+
+  it("still fails a call the contract executed", async () => {
+    const game = gameWith(receipt({ execution_result: "SUCCESS", result: { status: "return", payload: null } }));
+    await expect(expectRejected(world, () => game.setPaused(true), "only the owner")).rejects.toThrow(/accepted but must be rejected/);
   });
 });
