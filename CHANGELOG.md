@@ -15,6 +15,10 @@ Fixes from the first live run on Studio. The contract is unchanged.
 - Fixed: the live run failed a check when validators were cancelled after a quorum (`A10`). `resolve_quest` is open to anyone and
   safe to repeat while a quest is under review, so the suite now retries it (up to 3 attempts) and lists every error.
   A failure without a readable reason now shows the leader's outcome and the vote tally instead of a blank message.
+- Fixed: a successful call was reported as failed when one validator entry in the leader receipt was cancelled after the
+  quorum (`CONSENSUS_VALIDATOR_QUORUM_REACHED`, tx `0x4b6c600bed`). That entry reads `ERROR` but says nothing about the
+  call; `receiptFailed` and `extractRevertReason` now skip it (`isQuorumCancellation`). This made `F04` fail and then
+  `F06`/`F06.n` re-send `start_quest` into an already open quest. A non-fatal contract error is still a failure.
 - Added: checks `P01` and `O02` record which argument lengths the node accepts; `O01` records a refused resolve.
 - Added: tests for Studio-shaped receipts, the request limiter and the rate-limit retry.
 
